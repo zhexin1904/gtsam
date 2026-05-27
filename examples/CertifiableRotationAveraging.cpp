@@ -46,28 +46,6 @@ namespace {
 constexpr unsigned int kSeed = 60;
 constexpr double kPi = 3.14159265358979323846;
 
-/// If less than half of the `D × D` entries have positive determinant, negate
-/// every entry's last column. Required before per-block `Rot::ClosestTo`
-/// projects each block to SO(d) — otherwise its sign-correction fires only on
-/// the det < 0 blocks and the rounded rotations end up with inconsistent
-/// signs across keys.
-template <int D>
-void AlignBlockDetSigns(Values& qcqpValues) {
-  size_t numNeg = 0, numBlocks = 0;
-  for (const auto& [key, M] : qcqpValues.extract<Matrix>()) {
-    if (M.rows() != D) continue;
-    ++numBlocks;
-    if (M.determinant() < 0) ++numNeg;
-  }
-  if (numBlocks == 0 || numNeg <= numBlocks / 2) return;
-  for (const auto& [key, M] : qcqpValues.extract<Matrix>()) {
-    if (M.rows() != D) continue;
-    Matrix flipped = M;
-    flipped.col(M.cols() - 1) *= -1.0;
-    qcqpValues.update(key, flipped);
-  }
-}
-
 /// Random Rot2 / Rot3 init at column count `IntrinsicDim` (D ≥ ambient dim).
 template <typename RotT, int IntrinsicDim>
 Values RandomInitial(const std::set<Key>& keys) {
@@ -164,11 +142,10 @@ int RunCertifiableRA(const std::string& dataPath) {
 
   Values rounded;
   if (result.rounded) {
-    // unstack → gauge-align → per-block project to RotT.
+    // unstack → round via the type's trait (sign-fix + per-block project).
     Values atRankD = result.layout.unstack(result.rounded->Yd);
-    AlignBlockDetSigns<IntrinsicDim>(atRankD);
     for (auto& [key, R] :
-         ExtractQcqpValues<RotT, IntrinsicDim>(atRankD)) {
+         RoundQcqpValues<RotT, IntrinsicDim>(atRankD)) {
       rounded.insert(key, R);
     }
   }

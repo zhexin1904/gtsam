@@ -748,6 +748,36 @@ TEST(QcqpProblem, ExtractQcqpValuesSkipsForeignSlices) {
 }
 
 /* ************************************************************************* */
+// RoundQcqpValues<Rot3, 3> on 2 reflected 3×3 blocks: PostRoundFix fires
+// (majority det < 0), per-block ClosestTo then projects to valid Rot3.
+TEST(QcqpProblem, RoundQcqpValuesRot3FixesReflection) {
+  Values values;
+  Matrix refl3 = Matrix::Identity(3, 3);
+  refl3(2, 2) = -1.0;
+  values.insert(Symbol('x', 0), refl3);
+  values.insert(Symbol('x', 1), refl3);
+  const auto rots = RoundQcqpValues<Rot3, 3>(values);
+  LONGS_EQUAL(2, rots.size());
+  for (const auto& [key, R] : rots) {
+    EXPECT_DOUBLES_EQUAL(1.0, R.matrix().determinant(), 1e-9);
+  }
+}
+
+/* ************************************************************************* */
+// RoundQcqpValues<Rot3, 3> with majority-positive entries: PostRoundFix is a
+// no-op, ClosestTo projects each block.
+TEST(QcqpProblem, RoundQcqpValuesRot3NoOpMajorityPositive) {
+  Values values;
+  values.insert(Symbol('x', 0), Matrix(Matrix::Identity(3, 3)));
+  values.insert(Symbol('x', 1), Matrix(Matrix::Identity(3, 3)));
+  const auto rots = RoundQcqpValues<Rot3, 3>(values);
+  LONGS_EQUAL(2, rots.size());
+  for (const auto& [key, R] :rots) {
+    EXPECT(assert_equal(Matrix(Matrix::Identity(3, 3)), R.matrix(), 1e-9));
+  }
+}
+
+/* ************************************************************************* */
 int main() {
   TestResult tr;
   return TestRegistry::runAllTests(tr);

@@ -22,6 +22,8 @@
 #include <gtsam/constrained/LinearConstraint.h>
 #include <gtsam/constrained/QpCost.h>
 #include <gtsam/constrained/QuadraticConstraint.h>
+#include <gtsam/geometry/Rot2.h>
+#include <gtsam/geometry/Rot3.h>
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 
 #include <stdexcept>
@@ -117,6 +119,59 @@ std::vector<std::pair<Key, T>> ExtractQcqpValues(const Values& qcqpValues) {
     }
   }
   return out;
+}
+
+namespace internal {
+
+/// Type-specific post-rounding fix applied to a Values<Matrix> before per-block
+/// projection. Default: no-op. Specializations handle the rotation sign-flip.
+template <typename T, int D>
+struct PostRoundFix {
+  static void apply(Values&) {}
+};
+
+template <int RotRows, int D>
+inline void RotPostRoundFix(Values& qcqpValues) {
+  size_t numNeg = 0, numBlocks = 0;
+  for (const auto& [key, M] : qcqpValues.extract<Matrix>()) {
+    if (M.rows() != RotRows || M.cols() < RotRows) continue;
+    ++numBlocks;
+    if (M.template leftCols<RotRows>().determinant() < 0) ++numNeg;
+  }
+  if (numBlocks == 0 || numNeg <= numBlocks / 2) return;
+  for (const auto& [key, M] : qcqpValues.extract<Matrix>()) {
+    if (M.rows() != RotRows || M.cols() < RotRows) continue;
+    Matrix flipped = M;
+    flipped.col(D - 1) *= -1.0;
+    qcqpValues.update(key, flipped);
+  }
+}
+
+template <int D>
+struct PostRoundFix<Rot2, D> {
+  static void apply(Values& v) { RotPostRoundFix<2, D>(v); }
+};
+
+template <int D>
+struct PostRoundFix<Rot3, D> {
+  static void apply(Values& v) { RotPostRoundFix<3, D>(v); }
+};
+
+}  // namespace internal
+
+/**
+ * Apply the per-type post-rounding fix and then extract typed values. The
+ * typical post-staircase pipeline: a `Values<Matrix>` from `Layout::unstack`
+ * goes in, typed `T`s come out.
+ *
+ * Rotation specializations (`Rot2`, `Rot3`) reverse the global orientation
+ * when majority det < 0 (see `internal::RotPostRoundFix`). Other types fall
+ * through to a no-op.
+ */
+template <typename T, int D>
+std::vector<std::pair<Key, T>> RoundQcqpValues(Values qcqpValues) {
+  internal::PostRoundFix<T, D>::apply(qcqpValues);
+  return ExtractQcqpValues<T, D>(qcqpValues);
 }
 
 /**
